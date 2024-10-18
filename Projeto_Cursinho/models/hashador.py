@@ -86,7 +86,9 @@ usuario1 = {
                 {"atividade": "Prova 2", "nota": 7.5}
             ],
             "avisos": [
-                {"titulo": "Trabalho final", "mensagem": "O trabalho final deve ser entregue até o dia 15/12."}
+                {"titulo": "Trabalho final", 
+                 "conteudo": "O trabalho final deve ser entregue até o dia 15/12.",
+                 "data": "10-12-2021",}
             ]
         }
     ],
@@ -97,43 +99,6 @@ usuario1 = {
     ]
 } 
 
-usuario2 = {
-    "nome": "Maria",
-    "matricula": "54321",
-    "senha": senha_maria,
-    "tipo": "aluno",
-
-    "materias": [
-        {
-            "nome": "Matemática",
-            "professor": "Pedro",
-            "notas": [
-                {"atividade": "Prova 1", "nota": 8.7},
-                {"atividade": "Prova 2", "nota": 8.0}
-            ],
-            "avisos": [
-                {"titulo": "Prova 3", "mensagem": "A prova 3 será no dia 10/12."}
-            ]
-        },
-        {
-            "nome": "História",
-            "professor": "Ana",
-            "notas": [
-                {"atividade": "Prova 1", "nota": 9.0},
-                {"atividade": "Prova 2", "nota": 9.5}
-            ],
-            "avisos": [
-                {"titulo": "Trabalho final", "mensagem": "O trabalho final deve ser entregue até o dia 15/12."}
-            ]
-        }
-    ],
-
-    "grade_horaria": [
-        {"Matematica": "8:00"},
-        {"História": "10:00"}
-    ]
-
-}
 
 usuario3 = {
     "nome": "Pedro",
