@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+
+{% block title %}Home Professor{% endblock %}
+
+{% block content %}
+<h2>Bem-vindo, {{ professor.nome }}</h2>
+<p>Matrícula: {{ professor.matricula }}</p>
+<h3>Matérias</h3>
+<ul>
+    {% for materia in professor.materias %}
+        <li>{{ materia }}</li>
+    {% endfor %}
+</ul>
+{% endblock %}

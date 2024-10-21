@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block title %}Home Aluno{% endblock %}
+
+{% block content %}
+<h2>Bem-vindo, {{ aluno.nome }}</h2>
+<p>Matrícula: {{ aluno.matricula }}</p>
+
+<h3>Avisos</h3>
+<ul>
+    {% if avisos %}
+        {% for aviso in avisos %}
+            <li><strong>{{ aviso.titulo }}</strong>: {{ aviso.mensagem }}</li>
+        {% endfor %}
+    {% else %}
+        <p>Nenhum aviso disponível.</p>
+    {% endif %}
+</ul>
+{% endblock %}

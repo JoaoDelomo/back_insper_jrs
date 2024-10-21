@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}Home Gestor{% endblock %}
+
+{% block content %}
+<h2>Bem-vindo, {{ gestor.nome }}</h2>
+<p>Matrícula: {{ gestor.matricula }}</p>
+<h3>Usuários Gerenciados</h3>
+<p>Aqui você pode gerenciar usuários e visualizá-los.</p>
+{% endblock %}
