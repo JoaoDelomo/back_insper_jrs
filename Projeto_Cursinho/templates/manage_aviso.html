@@ -8,19 +8,16 @@
 <form action="{{ url_for('manage_aviso', aviso_id=aviso['_id'] if aviso else None) }}" method="POST">
     <div>
         <label for="titulo">Título:</label>
-        <input type="text" id="titulo" name="titulo" value="{{ aviso['titulo'] if aviso else '' }}" required>
+        <input type="text" id="titulo" name="titulo" value="{{ aviso.titulo if aviso else '' }}" required>
     </div>
-
     <div>
         <label for="mensagem">Mensagem:</label>
-        <textarea id="mensagem" name="mensagem" rows="4" required>{{ aviso['mensagem'] if aviso else '' }}</textarea>
+        <textarea id="mensagem" name="mensagem" required>{{ aviso.mensagem if aviso else '' }}</textarea>
     </div>
-
     <div>
         <label for="disciplina">Disciplina:</label>
-        <input type="text" id="disciplina" name="disciplina" value="{{ aviso['disciplina'] if aviso else '' }}" required>
+        <input type="text" id="disciplina" name="disciplina" value="{{ aviso.disciplina if aviso else '' }}" required>
     </div>
-
-    <button type="submit">{{ 'Salvar' if aviso else 'Criar' }}</button>
+    <button type="submit">{{ 'Atualizar' if aviso else 'Criar' }}</button>
 </form>
 {% endblock %}
