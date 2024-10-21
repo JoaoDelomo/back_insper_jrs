@@ -1,14 +1,34 @@
+
 {% extends "base.html" %}
 
 {% block title %}Home Professor{% endblock %}
 
 {% block content %}
-<h2>Bem-vindo, {{ professor.nome }}</h2>
-<p>Matrícula: {{ professor.matricula }}</p>
-<h3>Matérias</h3>
-<ul>
-    {% for materia in professor.materias %}
-        <li>{{ materia }}</li>
-    {% endfor %}
-</ul>
+<h2>Bem-vindo, Professor {{ professor.nome }}</h2>
+
+<table>
+    <thead>
+        <tr>
+            <th>Título</th>
+            <th>Disciplina</th>
+            <th>Ações</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for aviso in avisos %}
+        <tr>
+            <td>{{ aviso.titulo }}</td>
+            <td>{{ aviso.disciplina }}</td>
+            <td>
+                <a href="{{ url_for('manage_aviso', aviso_id=str(aviso['_id'])) }}" style="color: blue;">Editar</a>
+                <form action="{{ url_for('excluir_aviso', aviso_id=str(aviso['_id'])) }}" method="POST" style="display: inline;">
+                    <button type="submit" style="color: red;">Excluir</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<a href="{{ url_for('manage_aviso') }}">Criar Novo Aviso</a>
 {% endblock %}

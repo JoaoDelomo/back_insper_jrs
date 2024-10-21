@@ -11,6 +11,8 @@ def get_db():
 # Gerar hash das senhas
 senha_joao = generate_password_hash("senha_joao123")
 senha_maria = generate_password_hash("senha_maria123")
+senha_lucas = generate_password_hash("senha_lucas123")
+senha_ana = generate_password_hash("senha_ana123")
 
 # Dados dos usuários
 aluno_joao = {
@@ -21,10 +23,6 @@ aluno_joao = {
     "notas": [
         {"disciplina": "Matemática", "nota": 9.5},
         {"disciplina": "História", "nota": 8.0}
-    ],
-    "avisos": [
-        {"titulo": "Reunião de pais", "mensagem": "A reunião será na próxima sexta-feira."},
-        {"titulo": "Férias escolares", "mensagem": "As férias começam em 20 de dezembro."}
     ]
 }
 
@@ -36,42 +34,52 @@ aluno_maria = {
     "notas": [
         {"disciplina": "Matemática", "nota": 8.7},
         {"disciplina": "História", "nota": 9.0}
-    ],
-    "avisos": [
-        {"titulo": "Entrega de trabalhos", "mensagem": "Os trabalhos finais devem ser entregues até o dia 15 de dezembro."},
-        {"titulo": "Reunião de pais", "mensagem": "A reunião será na próxima segunda-feira."}
+    ]
+}
+
+aluno_lucas = {
+    "nome": "Lucas",
+    "matricula": "67890",
+    "senha": senha_lucas,
+    "tipo": "aluno",
+    "notas": [
+        {"disciplina": "Física", "nota": 7.5},
+        {"disciplina": "Química", "nota": 6.8}
     ]
 }
 
 professor_pedro = {
     "nome": "Pedro",
     "matricula": "13345",
-    "senha": senha_joao,  # Reutilizando a senha do João para simplificar
+    "senha": senha_joao,
     "tipo": "professor",
-    "materias": ["Matemática"],
-    "avisos": [
-        {"titulo": "Prova 3", "mensagem": "A prova 3 será no dia 10/12."}
-    ],
-    "grade_horaria": [
-        {"Matemática": "8:00"}
-    ]
+    "materias": ["Matemática"]
+}
+
+professora_ana = {
+    "nome": "Ana",
+    "matricula": "98765",
+    "senha": senha_ana,
+    "tipo": "professor",
+    "materias": ["História"]
 }
 
 gestor_jorge = {
     "nome": "Jorge",
     "matricula": "1222",
-    "senha": senha_joao,  # Reutilizando a senha do João para simplificar
-    "tipo": "gestor",
-    "materias": [],
-    "grade_horaria": []
+    "senha": senha_joao,
+    "tipo": "gestor"
 }
 
 # Função para inserir dados no MongoDB
 def inserir_dados():
     db = get_db()
     try:
-        # Inserir os usuários (alunos, professores e gestores) na collection 'usuarios'
-        db['usuarios'].insert_many([aluno_joao, aluno_maria, professor_pedro, gestor_jorge])
+        # Inserir todos os usuários na collection 'usuarios'
+        db['usuarios'].insert_many([
+            aluno_joao, aluno_maria, aluno_lucas,
+            professor_pedro, professora_ana, gestor_jorge
+        ])
         print("Usuários inseridos com sucesso!")
 
         # Verificar se os dados foram inseridos corretamente
