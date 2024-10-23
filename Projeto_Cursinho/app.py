@@ -1,19 +1,16 @@
-from flask import Flask, render_template, redirect, url_for, request, flash
+from flask import Flask, request, jsonify, redirect, url_for
 from flask_login import LoginManager, login_user, login_required, logout_user, UserMixin, current_user
-from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.security import check_password_hash, generate_password_hash
 from bson.objectid import ObjectId
 from models.database import get_db
 
-# Configuração do Flask
 app = Flask(__name__)
 app.secret_key = 'chave_secreta'
 
-# Configuração do Flask-Login
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
 
-# Modelo de Usuário
 class User(UserMixin):
     def __init__(self, matricula, tipo):
         self.matricula = matricula
@@ -22,7 +19,6 @@ class User(UserMixin):
     def get_id(self):
         return self.matricula
 
-# Carregar o usuário no Flask-Login
 @login_manager.user_loader
 def load_user(matricula):
     db = get_db()
@@ -31,164 +27,211 @@ def load_user(matricula):
         return User(matricula=usuario['matricula'], tipo=usuario['tipo'])
     return None
 
-# Rota de Login
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['POST'])
 def login():
-    if request.method == 'POST':
-        matricula = request.form.get('matricula')
-        senha = request.form.get('senha')
-        db = get_db()
-        usuario = db['usuarios'].find_one({"matricula": matricula})
+    data = request.json
+    matricula = data.get('matricula')
+    senha = data.get('senha')
 
-        if usuario and check_password_hash(usuario['senha'], senha):
-            user = User(matricula=usuario['matricula'], tipo=usuario['tipo'])
-            login_user(user)
-            if user.tipo == 'aluno':
-                return redirect(url_for('home_aluno'))
-            elif user.tipo == 'professor':
-                return redirect(url_for('home_professor'))
-            elif user.tipo == 'gestor':
-                return redirect(url_for('home_gestor'))
-        flash("Matrícula ou senha incorretos.")
-    return render_template('login.html')
+    db = get_db()
+    usuario = db['usuarios'].find_one({"matricula": matricula})
 
-# Rota de Logout
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    return redirect(url_for('login'))
+    if usuario and check_password_hash(usuario['senha'], senha):
+        user = User(matricula=usuario['matricula'], tipo=usuario['tipo'])
+        login_user(user)
+        return redirect(url_for(f"home_{user.tipo}"))
 
-# Rota do Aluno
-@app.route('/home-aluno')
+    return jsonify({"message": "Matrícula ou senha incorretos"}), 401
+
+@app.route('/home-aluno', methods=['GET'])
 @login_required
 def home_aluno():
     if current_user.tipo != 'aluno':
-        return "Apenas alunos podem acessar esta página.", 403
+        return jsonify({"message": "Apenas alunos podem acessar esta página"}), 403
 
     db = get_db()
-    aluno = db['usuarios'].find_one({"matricula": current_user.get_id(), "tipo": "aluno"})
-    avisos = list(db['avisos'].find())
+    aluno = db['usuarios'].find_one({"matricula": current_user.matricula})
+    materias = aluno.get("materias", [])
+    grade = list(db['grade_horaria'].find({}, {"_id": 0}))
+    avisos = list(db['avisos'].find({}, {"_id": 0}))
 
-    return render_template('home_aluno.html', aluno=aluno, avisos=avisos)
+    return jsonify({
+        "nome": aluno["nome"],
+        "notas": aluno.get("notas", []),
+        "materias": materias,
+        "grade_horaria": grade,
+        "avisos": avisos
+    }), 200
 
-# Rota do Professor
-@app.route('/home-professor')
+@app.route('/home-professor', methods=['GET'])
 @login_required
 def home_professor():
     if current_user.tipo != 'professor':
-        return "Apenas professores podem acessar esta página.", 403
+        return jsonify({"message": "Apenas professores podem acessar esta página"}), 403
 
     db = get_db()
-    professor = db['usuarios'].find_one({"matricula": current_user.get_id(), "tipo": "professor"})
-    alunos = list(db['usuarios'].find({"tipo": "aluno"}))
-    avisos = list(db['avisos'].find({"autor": current_user.get_id()}))
+    professor = db['usuarios'].find_one({"matricula": current_user.matricula})
+    materias = professor.get("materias", [])
+    alunos = list(db['usuarios'].find({"tipo": "aluno"}, {"_id": 0, "nome": 1, "notas": 1}))
+    grade = list(db['grade_horaria'].find({}, {"_id": 0}))
 
-    return render_template('home_professor.html', professor=professor, alunos=alunos, avisos=avisos)
+    return jsonify({
+        "nome": professor["nome"],
+        "materias": materias,
+        "alunos": alunos,
+        "grade_horaria": grade
+    }), 200
 
-# Rota para Criar/Editar Nota
-@app.route('/notas/manage/<aluno_id>', methods=['GET', 'POST'])
-@app.route('/notas/manage/<aluno_id>/<int:nota_idx>', methods=['GET', 'POST'])
+@app.route('/materia/<nome_materia>', methods=['GET'])
 @login_required
-def manage_nota(aluno_id, nota_idx=None):
+def listar_conteudo_materia(nome_materia):
     db = get_db()
-    aluno = db['usuarios'].find_one({"_id": ObjectId(aluno_id)})
-    nota = aluno['notas'][nota_idx] if nota_idx is not None else None
+    # Busca conteúdos relacionados à matéria
+    conteudos = list(db['usuarios'].aggregate([
+        {"$match": {"conteudos.materia": nome_materia}},
+        {"$unwind": "$conteudos"},
+        {"$match": {"conteudos.materia": nome_materia}},
+        {"$project": {"_id": 0, "conteudos": 1}}
+    ]))
 
-    if request.method == 'POST':
-        disciplina = request.form['disciplina']
-        titulo = request.form.get('titulo', 'Sem título')
-        valor = float(request.form['nota'])
+    if not conteudos:
+        return jsonify({"message": "Nenhum conteúdo encontrado para esta matéria"}), 404
 
-        if nota:  # Atualizar nota existente
-            db['usuarios'].update_one(
-                {"_id": ObjectId(aluno_id)},
-                {"$set": {f"notas.{nota_idx}.disciplina": disciplina, 
-                          f"notas.{nota_idx}.titulo": titulo, 
-                          f"notas.{nota_idx}.nota": valor}}
-            )
-        else:  # Adicionar nova nota
-            nova_nota = {
-                "disciplina": disciplina,
-                "titulo": titulo,
-                "nota": valor
-            }
-            db['usuarios'].update_one(
-                {"_id": ObjectId(aluno_id)},
-                {"$push": {"notas": nova_nota}}
-            )
+    return jsonify({"conteudos": [c["conteudos"] for c in conteudos]}), 200
 
-        flash("Nota salva com sucesso!")
-        return redirect(url_for('home_professor'))
-
-    return render_template('manage_nota.html', aluno=aluno, nota=nota)
-
-
-# Rota para excluir nota
-@app.route('/notas/excluir/<aluno_id>/<int:nota_idx>', methods=['POST'])
+@app.route('/professor/conteudo', methods=['POST'])
 @login_required
-def excluir_nota(aluno_id, nota_idx):
+def criar_conteudo():
+    if current_user.tipo != 'professor':
+        return jsonify({"message": "Apenas professores podem criar conteúdos"}), 403
+
+    # Buscar as matérias do professor diretamente do banco de dados
     db = get_db()
+    professor = db['usuarios'].find_one({"matricula": current_user.matricula})
+
+    if not professor:
+        return jsonify({"message": "Usuário não encontrado"}), 404
+
+    materias = professor.get('materias', [])
+
+    # Obter os dados do conteúdo do JSON enviado
+    data = request.json
+    materia = data.get('materia')
+    titulo = data.get('titulo')
+    descricao = data.get('descricao')
+
+    # Verificar se a matéria fornecida pertence ao professor
+    if materia not in materias:
+        return jsonify({"message": "Você só pode criar conteúdos para suas matérias"}), 403
+
+    # Criar o novo conteúdo
+    novo_conteudo = {
+        "materia": materia,
+        "titulo": titulo,
+        "descricao": descricao
+    }
+
+    # Adicionar o conteúdo ao campo 'conteudos' do professor
     db['usuarios'].update_one(
-        {"_id": ObjectId(aluno_id)},
-        {"$unset": {f"notas.{nota_idx}": 1}}
+        {"matricula": current_user.matricula},
+        {"$push": {"conteudos": novo_conteudo}}
     )
-    db['usuarios'].update_one(
-        {"_id": ObjectId(aluno_id)},
-        {"$pull": {"notas": None}}
-    )
-    flash("Nota excluída com sucesso!")
-    return redirect(url_for('home_professor'))
 
+    return jsonify({"message": "Conteúdo criado com sucesso"}), 201
 
-
-# Rota para Criar/Editar Aviso
-@app.route('/avisos/manage', methods=['GET', 'POST'])
-@app.route('/avisos/manage/<aviso_id>', methods=['GET', 'POST'])
-@login_required
-def manage_aviso(aviso_id=None):
-    db = get_db()
-    aviso = db['avisos'].find_one({"_id": ObjectId(aviso_id)}) if aviso_id else None
-
-    if request.method == 'POST':
-        titulo = request.form.get('titulo')
-        mensagem = request.form.get('mensagem')
-
-        aviso_data = {"titulo": titulo, "mensagem": mensagem, "autor": current_user.get_id()}
-
-        if aviso:
-            db['avisos'].update_one({"_id": ObjectId(aviso_id)}, {"$set": aviso_data})
-            flash("Aviso atualizado com sucesso!")
-        else:
-            db['avisos'].insert_one(aviso_data)
-            flash("Aviso criado com sucesso!")
-
-        return redirect(url_for('home_professor' if current_user.tipo == 'professor' else 'home_gestor'))
-
-    return render_template('manage_aviso.html', aviso=aviso)
-
-# Rota para Excluir Aviso
-@app.route('/avisos/excluir/<aviso_id>', methods=['POST'])
-@login_required
-def excluir_aviso(aviso_id):
-    db = get_db()
-    db['avisos'].delete_one({"_id": ObjectId(aviso_id)})
-    flash("Aviso excluído com sucesso!")
-
-    return redirect(url_for('home_professor' if current_user.tipo == 'professor' else 'home_gestor'))
-
-# Rota do Gestor
-@app.route('/home-gestor')
+@app.route('/home-gestor', methods=['GET'])
 @login_required
 def home_gestor():
     if current_user.tipo != 'gestor':
-        return "Apenas gestores podem acessar esta página.", 403
+        return jsonify({"message": "Apenas gestores podem acessar esta página"}), 403
 
     db = get_db()
-    avisos = list(db['avisos'].find())
+    alunos = list(db['usuarios'].find({"tipo": "aluno"}, {"_id": 0, "nome": 1, "notas": 1}))
+    grade = list(db['grade_horaria'].find({}, {"_id": 0}))
+    avisos = list(db['avisos'].find({}, {"_id": 0}))
 
-    return render_template('home_gestor.html', avisos=avisos)
+    return jsonify({
+        "alunos": alunos,
+        "grade_horaria": grade,
+        "avisos": avisos
+    }), 200
+
+
+@app.route('/gestor/criar-usuario', methods=['POST'])
+@login_required
+def criar_usuario():
+    if current_user.tipo != 'gestor':
+        return jsonify({"message": "Apenas gestores podem criar usuários"}), 403
+
+    data = request.json
+    senha_hash = generate_password_hash(data['senha'])
+
+    trilha = data.get('trilha')
+    if trilha not in ["humanas", "naturais"]:
+        return jsonify({"message": "Trilha inválida"}), 400
+
+    materias = ["Matemática", "Português"] + [trilha.capitalize()]
+
+    usuario = {
+        "nome": data['nome'],
+        "matricula": data['matricula'],
+        "senha": senha_hash,
+        "tipo": data['tipo'],
+        "turma": data['turma'],
+        "trilha": trilha,
+        "materias": materias,
+        "notas": []
+    }
+
+    db = get_db()
+    db['usuarios'].insert_one(usuario)
+    return jsonify({"message": "Usuário criado com sucesso"}), 201
+
+@app.route('/gestor/notas/<aluno_id>', methods=['POST'])
+@login_required
+def definir_nota(aluno_id):
+    if current_user.tipo != 'gestor':
+        return jsonify({"message": "Apenas gestores podem definir notas"}), 403
+
+    # Buscar o aluno pelo campo 'matricula' (ou outro identificador usado no seu banco)
+    db = get_db()
+    aluno = db['usuarios'].find_one({"matricula": aluno_id})
+
+    if not aluno:
+        return jsonify({"message": "Aluno não encontrado"}), 404
+
+    data = request.json
+    nova_nota = {"simulado": data['simulado'], "nota": data['nota']}
+
+    # Atualizar as notas do aluno encontrado
+    db['usuarios'].update_one(
+        {"matricula": aluno_id},
+        {"$push": {"notas": nova_nota}}
+    )
+
+    return jsonify({"message": "Nota adicionada com sucesso"}), 200
+
+@app.route('/gestor/grade-horaria', methods=['POST'])
+@login_required
+def criar_grade_horaria():
+    if current_user.tipo != 'gestor':
+        return jsonify({"message": "Apenas gestores podem criar a grade horária"}), 403
+
+    data = request.json
+    nova_entrada = {
+        "materia": data['materia'],
+        "dias": data['dias'],
+        "horario": data['horario']
+    }
+    db = get_db()
+    db['grade_horaria'].insert_one(nova_entrada)
+    return jsonify({"message": "Grade horária adicionada com sucesso"}), 201
+
+@app.route('/logout', methods=['GET'])
+@login_required
+def logout():
+    logout_user()
+    return jsonify({"message": "Logout bem-sucedido"}), 200
 
 if __name__ == '__main__':
     app.run(debug=True)
-
