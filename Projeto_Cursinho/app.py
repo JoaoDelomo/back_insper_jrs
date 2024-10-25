@@ -230,22 +230,43 @@ def criar_usuario():
     
     senha_hash = generate_password_hash(data['senha'])
 
-    trilha = data.get('trilha')
-    if trilha not in ["humanas", "naturais"]:
-        return jsonify({"message": "Trilha inválida"}), 400
+    if data.get('tipo') == 'aluno':
+        trilha = data.get('trilha')
+        if trilha not in ["humanas", "naturais"]:
+            return jsonify({"message": "Trilha inválida"}), 400
 
-    materias = ["Matemática", "Português"] + [trilha.capitalize()]
+        materias = ["matematica", "portugues", trilha]
 
-    usuario = {
-        "nome": data['nome'],
-        "matricula": data['matricula'],
-        "senha": senha_hash,
-        "tipo": data['tipo'],
-        "turma": data['turma'],
-        "trilha": trilha,
-        "materias": materias,
-        "notas": []
-    }
+        usuario = {
+            "nome": data['nome'],
+            "matricula": data['matricula'],
+            "senha": senha_hash,
+            "tipo": data['tipo'],
+            "turma": data['turma'],
+            "trilha": trilha,
+            "materias": materias,
+            "notas": []
+        }
+
+    elif data.get('tipo') == 'professor':
+        usuario = {
+            "nome": data['nome'],
+            "matricula": data['matricula'],
+            "senha": senha_hash,
+            "tipo": data['tipo'],
+            "materias": data['materias'],
+            "avisos": [],
+            "conteudos": []
+        }
+
+    elif data.get('tipo') == 'gestor':
+        usuario = {
+            "nome": data['nome'],
+            "matricula": data['matricula'],
+            "senha": senha_hash,
+            "tipo": data['tipo'],
+            "avisos": [],
+        }
 
     db = get_db()
     db['usuarios'].insert_one(usuario)
