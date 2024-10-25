@@ -3,9 +3,17 @@ from flask_login import LoginManager, login_user, login_required, logout_user, U
 from werkzeug.security import check_password_hash, generate_password_hash
 from bson.objectid import ObjectId
 from models.database import get_db
+from flask_cors import CORS
+from functools import wraps
+import jwt
+import datetime
+
 
 app = Flask(__name__)
 app.secret_key = 'chave_secreta'
+
+CORS(app, origins=["http://localhost:5173"], supports_credentials=True)
+
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -18,6 +26,26 @@ class User(UserMixin):
 
     def get_id(self):
         return self.matricula
+    
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            token = request.headers['Authorization'].split(" ")[1]
+
+        if not token:
+            return jsonify({"message": "Token ausente"}), 401
+
+        try:
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            current_user = load_user(data['matricula'])
+        except Exception as e:
+            return jsonify({"message": f"Token inválido: {str(e)}"}), 401
+
+        return f(*args, **kwargs)
+
+    return decorated
 
 @login_manager.user_loader
 def load_user(matricula):
@@ -27,11 +55,14 @@ def load_user(matricula):
         return User(matricula=usuario['matricula'], tipo=usuario['tipo'])
     return None
 
-@app.route('/login', methods=['POST'])
+@app.route('/login', methods=['POST', 'GET'])
 def login():
     data = request.json
     matricula = data.get('matricula')
     senha = data.get('senha')
+
+    if not matricula or not senha:
+        return jsonify({"message": "Dados incompletos"}), 400
 
     db = get_db()
     usuario = db['usuarios'].find_one({"matricula": matricula})
@@ -39,13 +70,29 @@ def login():
     if usuario and check_password_hash(usuario['senha'], senha):
         user = User(matricula=usuario['matricula'], tipo=usuario['tipo'])
         login_user(user)
-        return redirect(url_for(f"home_{user.tipo}"))
+        
+        # Gerar token JWT
+        token = jwt.encode({
+            'matricula': usuario['matricula'],
+            'tipo': usuario['tipo'],
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+        }, app.config['SECRET_KEY'], algorithm='HS256')
+
+        return jsonify({
+            "message": "Login realizado com sucesso",
+            "token": token,
+            "tipo": usuario['tipo']
+        }), 200
 
     return jsonify({"message": "Matrícula ou senha incorretos"}), 401
 
+
 @app.route('/home-aluno', methods=['GET'])
-@login_required
+@token_required
 def home_aluno():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
     if current_user.tipo != 'aluno':
         return jsonify({"message": "Apenas alunos podem acessar esta página"}), 403
 
@@ -64,8 +111,12 @@ def home_aluno():
     }), 200
 
 @app.route('/home-professor', methods=['GET'])
-@login_required
+@token_required
 def home_professor():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'professor':
         return jsonify({"message": "Apenas professores podem acessar esta página"}), 403
 
@@ -83,7 +134,7 @@ def home_professor():
     }), 200
 
 @app.route('/materia/<nome_materia>', methods=['GET'])
-@login_required
+@token_required
 def listar_conteudo_materia(nome_materia):
     db = get_db()
     # Busca conteúdos relacionados à matéria
@@ -100,8 +151,12 @@ def listar_conteudo_materia(nome_materia):
     return jsonify({"conteudos": [c["conteudos"] for c in conteudos]}), 200
 
 @app.route('/professor/conteudo', methods=['POST'])
-@login_required
+@token_required
 def criar_conteudo():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'professor':
         return jsonify({"message": "Apenas professores podem criar conteúdos"}), 403
 
@@ -140,8 +195,12 @@ def criar_conteudo():
     return jsonify({"message": "Conteúdo criado com sucesso"}), 201
 
 @app.route('/home-gestor', methods=['GET'])
-@login_required
+@token_required
 def home_gestor():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem acessar esta página"}), 403
 
@@ -158,12 +217,17 @@ def home_gestor():
 
 
 @app.route('/gestor/criar-usuario', methods=['POST'])
-@login_required
+@token_required
 def criar_usuario():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem criar usuários"}), 403
 
     data = request.json
+    
     senha_hash = generate_password_hash(data['senha'])
 
     trilha = data.get('trilha')
@@ -187,9 +251,14 @@ def criar_usuario():
     db['usuarios'].insert_one(usuario)
     return jsonify({"message": "Usuário criado com sucesso"}), 201
 
+
 @app.route('/gestor/notas/<aluno_id>', methods=['POST'])
-@login_required
+@token_required
 def definir_nota(aluno_id):
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem definir notas"}), 403
 
@@ -212,8 +281,12 @@ def definir_nota(aluno_id):
     return jsonify({"message": "Nota adicionada com sucesso"}), 200
 
 @app.route('/gestor/grade-horaria', methods=['POST'])
-@login_required
+@token_required
 def criar_grade_horaria():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem criar a grade horária"}), 403
 
@@ -227,8 +300,8 @@ def criar_grade_horaria():
     db['grade_horaria'].insert_one(nova_entrada)
     return jsonify({"message": "Grade horária adicionada com sucesso"}), 201
 
-@app.route('/logout', methods=['GET'])
-@login_required
+@app.route('/logout', methods=['POST'])
+@token_required
 def logout():
     logout_user()
     return jsonify({"message": "Logout bem-sucedido"}), 200
