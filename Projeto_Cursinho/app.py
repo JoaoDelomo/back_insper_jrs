@@ -765,6 +765,27 @@ def deletar_aula(aula_id):
 
     return jsonify({"message": "Aula deletada com sucesso"}), 200
 
+@app.route('/professor/listar-materias', methods=['GET'])
+@token_required
+def listar_materias_professor():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+    
+    if current_user.tipo != 'professor':
+        return jsonify({"message": "Apenas professores podem deletar aulas"}), 403
+    
+    professor_matricula = current_user.matricula
+
+    db = get_db()
+    professor = db['usuarios'].find_one({"matricula": professor_matricula})
+
+    if not professor:
+        return jsonify({"message": "Professor não encontrado"}), 404
+    
+
+    return jsonify({"materias": professor.get("materias", [])}), 200
+
 
 @app.route('/logout', methods=['POST'])
 @token_required
