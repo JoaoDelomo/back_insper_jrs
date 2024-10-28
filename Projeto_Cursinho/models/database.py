@@ -37,8 +37,9 @@ aluno_maria = {
     "turma": "online",
     "materias": ["Matemática", "Português", "Humanas"],
     "notas": [
-        {"simulado": "Simulado 1", "nota": 7.5},
-        {"simulado": "Simulado 2", "nota": 8.8}
+        {"id": 1, "simulado": "Simulado 1", "nota": 7.5},
+        {"id": 2, "simulado": "Simulado 2", "nota": 8.8},
+
     ]
 }
 
