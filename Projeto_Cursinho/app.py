@@ -29,9 +29,9 @@ class User(UserMixin):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = None
-        if 'Authorization' in request.headers:
-            token = request.headers['Authorization'].split(" ")[1]
+        token = request.headers.get('Authorization', None)
+        if token:
+            token = token.split(" ")[1]
 
         if not token:
             return jsonify({"message": "Token ausente"}), 401
@@ -39,12 +39,20 @@ def token_required(f):
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             current_user = load_user(data['matricula'])
-        except Exception as e:
+
+            if not current_user:
+                return jsonify({"message": "Usuário não encontrado"}), 404
+        except jwt.ExpiredSignatureError:
+            return jsonify({"message": "Token expirado"}), 401
+        except jwt.InvalidTokenError as e:
             return jsonify({"message": f"Token inválido: {str(e)}"}), 401
 
+        # Passa o usuário atual no kwargs para evitar conflitos
+        kwargs['current_user'] = current_user
         return f(*args, **kwargs)
 
     return decorated
+
 
 @login_manager.user_loader
 def load_user(matricula):
@@ -52,7 +60,8 @@ def load_user(matricula):
     usuario = db['usuarios'].find_one({"matricula": matricula})
     if usuario:
         return User(matricula=usuario['matricula'], tipo=usuario['tipo'])
-    return None
+    return None  # Certifique-se de que None é retornado apenas quando o usuário não existe.
+
 
 @app.route('/login', methods=['POST', 'GET'])
 def login():
@@ -85,13 +94,9 @@ def login():
 
     return jsonify({"message": "Matrícula ou senha incorretos"}), 401
 
-
 @app.route('/home-aluno', methods=['GET'])
 @token_required
-def home_aluno():
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+def home_aluno(current_user=None):
     if current_user.tipo != 'aluno':
         return jsonify({"message": "Apenas alunos podem acessar esta página"}), 403
 
@@ -108,6 +113,7 @@ def home_aluno():
         "grade_horaria": grade,
         "avisos": avisos
     }), 200
+
 
 @app.route('/home-professor', methods=['GET'])
 @token_required
@@ -132,30 +138,12 @@ def home_professor():
         "grade_horaria": grade
     }), 200
 
-@app.route('/materia/<nome_materia>', methods=['GET'])
-@token_required
-def listar_conteudo_materia(nome_materia):
-    db = get_db()
-    # Busca conteúdos relacionados à matéria
-    conteudos = list(db['usuarios'].aggregate([
-        {"$match": {"conteudos.materia": nome_materia}},
-        {"$unwind": "$conteudos"},
-        {"$match": {"conteudos.materia": nome_materia}},
-        {"$project": {"_id": 0, "conteudos": 1}}
-    ]))
-
-    if not conteudos:
-        return jsonify({"message": "Nenhum conteúdo encontrado para esta matéria"}), 404
-
-    return jsonify({"conteudos": [c["conteudos"] for c in conteudos]}), 200
 
 
 @app.route('/home-gestor', methods=['GET'])
 @token_required
-def home_gestor():
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+def home_gestor(**kwargs):
+    current_user = kwargs.get('current_user')
 
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem acessar esta página"}), 403
@@ -164,13 +152,14 @@ def home_gestor():
     alunos = list(db['usuarios'].find({"tipo": "aluno"}, {"_id": 0, "nome": 1, "notas": 1}))
     grade = list(db['grade_horaria'].find({}, {"_id": 0}))
     avisos = list(db['avisos'].find({"materia": "geral"}, {"_id": 1, "titulo": 1, "conteudo": 1, "autor": 1, "data": 1, "materia": 1}))
+
     for aviso in avisos:
         aviso['_id'] = str(aviso['_id'])
-    
 
     return jsonify({
         "avisos": avisos
     }), 200
+
 
 @app.route('/editar-aviso/<aviso_id>', methods=['PUT'])
 @token_required
@@ -250,10 +239,8 @@ def criar_aviso():
 
 @app.route('/gestor/lista-alunos', methods=['GET'])
 @token_required
-def listar_alunos():
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+def listar_alunos(**kwargs):
+    current_user = kwargs.get('current_user')
 
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem listar alunos"}), 403
@@ -261,6 +248,7 @@ def listar_alunos():
     db = get_db()
     alunos = list(db['usuarios'].find({"tipo": "aluno"}, {"_id": 0, "nome": 1, "matricula": 1, "turma": 1, "trilha": 1}))
     return jsonify({"alunos": alunos}), 200
+
 
 @app.route('/gestor/editar-aluno/<aluno_matricula>', methods=['PUT'])
 @token_required
@@ -310,17 +298,20 @@ def deletar_aluno(aluno_matricula):
 
 @app.route('/gestor/lista-professores', methods=['GET'])
 @token_required
-def listar_professores():
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+def listar_professores(**kwargs):
+    current_user = kwargs.get('current_user')
 
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem listar professores"}), 403
 
     db = get_db()
-    professores = list(db['usuarios'].find({"tipo": "professor"}, {"_id": 0, "nome": 1, "matricula": 1, "materias": 1}))
+    professores = list(db['usuarios'].find(
+        {"tipo": "professor"},
+        {"_id": 0, "nome": 1, "matricula": 1, "materias": 1}
+    ))
+
     return jsonify({"professores": professores}), 200
+
 
 @app.route('/gestor/editar-professor/<professor_matricula>', methods=['PUT'])
 @token_required
@@ -369,17 +360,20 @@ def deletar_professor(professor_matricula):
 
 @app.route('/gestor/lista-gestores', methods=['GET'])
 @token_required
-def listar_gestores():
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+def listar_gestores(**kwargs):
+    current_user = kwargs.get('current_user')
 
     if current_user.tipo != 'gestor':
         return jsonify({"message": "Apenas gestores podem listar gestores"}), 403
 
     db = get_db()
-    gestores = list(db['usuarios'].find({"tipo": "gestor"}, {"_id": 0, "nome": 1, "matricula": 1}))
+    gestores = list(db['usuarios'].find(
+        {"tipo": "gestor"},
+        {"_id": 0, "nome": 1, "matricula": 1}
+    ))
+
     return jsonify({"gestores": gestores}), 200
+
 
 @app.route('/gestor/editar-gestor/<gestor_matricula>', methods=['PUT'])
 @token_required
@@ -606,18 +600,25 @@ def listar_avisos(materia):
         aviso['_id'] = str(aviso['_id'])
     return jsonify({"avisos": avisos}), 200
 
-@app.route('/listar-conteudos/<materia>', methods=['GET'])
-@token_required
+@app.route('/listar_conteudos/<materia>', methods=['GET'])
 def listar_conteudos(materia):
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
+    # Converte a matéria para minúsculas para garantir a correspondência correta
+    materia_normalizada = materia.lower()
     
     db = get_db()
-    conteudos = list(db['conteudos'].find({"materia": materia}, {"_id": 1, "titulo": 1, "descricao": 1, "materia": 1, "autor": 1, "data": 1, "arquivos":1}))
+    # Busca todos os conteúdos relacionados à matéria
+    conteudos = list(db['conteudos'].find({"materia": materia_normalizada}))
+
+    # Se não encontrar conteúdos, retorna uma mensagem 404
+    if not conteudos:
+        return {"erro": "Conteúdos não encontrados para a matéria solicitada"}, 404
+
+    # Converte ObjectId para string para evitar problemas na serialização JSON
     for conteudo in conteudos:
         conteudo['_id'] = str(conteudo['_id'])
-    return jsonify({"conteudos": conteudos}), 200
+
+    return jsonify(conteudos), 200
+
 
 @app.route('/criar-conteudo', methods=['POST'])
 @token_required
