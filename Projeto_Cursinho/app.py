@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, redirect, url_for
+from flask import Flask, request, jsonify, redirect, url_for, send_file
 from flask_login import LoginManager, login_user, login_required, logout_user, UserMixin, current_user
 from werkzeug.security import check_password_hash, generate_password_hash
 from bson.objectid import ObjectId
@@ -7,10 +7,18 @@ from flask_cors import CORS , cross_origin
 from functools import wraps
 import jwt
 import datetime
+from flask_pymongo import PyMongo
+import base64
+from flask import jsonify
+import gridfs
 
 
 app = Flask(__name__)
 app.secret_key = 'chave_secreta'
+app.config['MONGO_URI'] = "mongodb+srv://admin:admin@delomo.zxqnf.mongodb.net/JRs"
+mongo = PyMongo(app)
+
+
 
 login_manager = LoginManager()
 login_manager.init_app(app)
@@ -431,6 +439,12 @@ def criar_usuario():
         return jsonify({"message": "Apenas gestores podem criar usuários"}), 403
 
     data = request.json
+
+    matricula = data['matricula']
+    db = get_db()
+    usuario = db['usuarios'].find_one({"matricula": matricula})
+    if usuario:
+        return jsonify({"message": "Matrícula já existe"}), 400
     
     senha_hash = generate_password_hash(data['senha'])
 
@@ -606,19 +620,14 @@ def listar_conteudos(materia):
     materia_normalizada = materia.lower()
     
     db = get_db()
-    # Busca todos os conteúdos relacionados à matéria
-    conteudos = list(db['conteudos'].find({"materia": materia_normalizada}))
 
-    # Se não encontrar conteúdos, retorna uma mensagem 404
-    if not conteudos:
-        return {"erro": "Conteúdos não encontrados para a matéria solicitada"}, 404
-
-    # Converte ObjectId para string para evitar problemas na serialização JSON
+    conteudos = list(mongo.db['conteudos'].find({"materia": materia}, {"_id": 1, "titulo": 1, "descricao": 1, "materia": 1, "autor": 1, "data": 1, "arquivos": 1}))
+    
+    # Gera URLs de download para cada arquivo
     for conteudo in conteudos:
         conteudo['_id'] = str(conteudo['_id'])
 
-    return jsonify(conteudos), 200
-
+    return jsonify({"conteudos": conteudos}), 200
 
 @app.route('/criar-conteudo', methods=['POST'])
 @token_required
@@ -635,14 +644,28 @@ def criar_conteudo():
     usuario = db['usuarios'].find_one({"matricula": matricula})
     nome_autor = usuario['nome']
     
-    data = request.json
+    # Obtém os dados de texto do FormData
+    titulo = request.form.get('titulo')
+    descricao = request.form.get('descricao')
+    materia = request.form.get('materia')
+    
+    # Obtém os arquivos
+    files = request.files.getlist('arquivos')
+
+    arquivos = []
+    for file in files:
+        filename = file.filename  # Usar secure_filename para evitar problemas com nomes
+        mongo.save_file(filename, file)
+        id = mongo.db['fs.files'].find_one({"filename": filename})['_id']
+        arquivos.append({"filename": filename, "id": str(id)})
+    
     novo_conteudo = {
-        "materia": data['materia'],
-        "titulo": data['titulo'],
-        "descricao": data['descricao'],
+        "materia": materia,
+        "titulo": titulo,
+        "descricao": descricao,
         "autor": nome_autor,
         "data": datetime.datetime.now().strftime("%d/%m/%Y"),
-        "arquivos": data.get('arquivos', [])
+        "arquivos": arquivos,
     }
 
     db = get_db()
@@ -652,26 +675,65 @@ def criar_conteudo():
 @app.route('/editar-conteudo/<conteudo_id>', methods=['PUT'])
 @token_required
 def editar_conteudo(conteudo_id):
-    token = request.headers['Authorization'].split(" ")[1]
-    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-    current_user = load_user(data['matricula'])
-    
-    if current_user.tipo != 'professor' and current_user.tipo != 'gestor':
-        return jsonify({"message": "Apenas professores e gestores podem editar conteúdos"}), 403
+    try:
+        token = request.headers['Authorization'].split(" ")[1]
+        data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+        current_user = load_user(data['matricula'])
+        
+        if current_user.tipo != 'professor' and current_user.tipo != 'gestor':
+            return jsonify({"message": "Apenas professores e gestores podem editar conteúdos"}), 403
 
-    data = request.json
-    db = get_db()
-    conteudo = db['conteudos'].find_one({"_id": ObjectId(conteudo_id)})
+        # Pegando dados do FormData
+        titulo = request.form.get('titulo')
+        descricao = request.form.get('descricao')
+        
+        db = get_db()
+        conteudo = db['conteudos'].find_one({"_id": ObjectId(conteudo_id)})
 
-    if not conteudo:
-        return jsonify({"message": "Conteúdo não encontrado"}), 404
+        if not conteudo:
+            return jsonify({"message": "Conteúdo não encontrado"}), 404
+        
+        # Processando arquivos
+        arquivos_existentes = request.form.getlist('arquivosExistentes')
+        arquivos = []
 
-    db['conteudos'].update_one(
-        {"_id": ObjectId(conteudo_id)},
-        {"$set": {"titulo": data['titulo'], "descricao": data['descricao'], "arquivos": data.get('arquivos', [])}}
-    )
+        print(arquivos_existentes)
 
-    return jsonify({"message": "Conteúdo editado com sucesso"}), 200
+        for id in arquivos_existentes:
+
+            arquivos.append({"filename": mongo.db['fs.files'].find_one({"_id": ObjectId(id)})['filename'], "id": id})
+        if 'arquivos' in request.files:
+            files = request.files.getlist('arquivos')
+            for file in files:
+                if file.filename:  # Verifica se um arquivo foi realmente enviado
+                    filename = file.filename  # Garante um nome de arquivo seguro
+                    mongo.save_file(filename, file)
+                    id = mongo.db['fs.files'].find_one({"filename": filename})['_id']
+                    arquivos.append({"filename": filename, "id": str(id)})
+
+        
+
+
+        update_data = {
+            "titulo": titulo,
+            "descricao": descricao,
+        }
+
+        
+        print(arquivos)
+
+        update_data["arquivos"] = arquivos
+
+        db['conteudos'].update_one(
+            {"_id": ObjectId(conteudo_id)},
+            {"$set": update_data}
+        )
+
+        return jsonify({"message": "Conteúdo editado com sucesso"}), 200
+        
+    except Exception as e:
+        print(f"Erro ao editar conteúdo: {str(e)}")
+        return jsonify({"message": "Erro ao editar conteúdo", "error": str(e)}), 500
 
 @app.route('/deletar-conteudo/<conteudo_id>', methods=['DELETE'])
 @token_required
@@ -686,12 +748,62 @@ def deletar_conteudo(conteudo_id):
     db = get_db()
     conteudo = db['conteudos'].find_one({"_id": ObjectId(conteudo_id)})
 
+    for arquivo in conteudo['arquivos']:
+        db['fs.files'].delete_one({"_id": ObjectId(arquivo['id'])})
+
     if not conteudo:
         return jsonify({"message": "Conteúdo não encontrado"}), 404
 
     db['conteudos'].delete_one({"_id": ObjectId(conteudo_id)})
 
     return jsonify({"message": "Conteúdo deletado com sucesso"}), 200
+
+@app.route('/deletar-arquivo/<id>', methods=['DELETE'])
+@token_required
+def deletar_arquivo(id):
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+    
+    if current_user.tipo != 'professor' and current_user.tipo != 'gestor':
+        return jsonify({"message": "Apenas professores e gestores podem deletar arquivos"}), 403
+
+    db = get_db()
+    arquivo = db['fs.files'].find_one({"_id": ObjectId(id)})
+
+    if not arquivo:
+        return jsonify({"message": "Arquivo não encontrado"}), 404
+
+    db['fs.files'].delete_one({"_id": ObjectId(id)})
+
+    return jsonify({"message": "Arquivo deletado com sucesso"}), 200
+
+
+@app.route('/baixar-arquivo/<id>', methods=['GET'])
+@token_required
+def baixar_arquivo(id):
+    db = get_db()
+    fs = gridfs.GridFS(db)
+    try:
+        # Verifica se o arquivo existe
+        arquivo = db['fs.files'].find_one({"_id": ObjectId(id)})
+        if not arquivo:
+            return jsonify({"message": "Arquivo não encontrado"}), 404
+        
+        # Obtém o conteúdo do arquivo do GridFS
+        grid_out =fs.get(ObjectId(id))
+        file_content = grid_out.read()
+        
+        # Codifica o conteúdo em Base64
+        base64_content = base64.b64encode(file_content).decode('utf-8')
+        filename = arquivo['filename']
+
+        # Retorna o conteúdo codificado
+        return jsonify({"filename": filename, "content": base64_content}), 200
+    
+    except Exception as e:
+        return jsonify({"message": "Erro ao baixar o arquivo", "error": str(e)}), 500
+
 
 @app.route('/listar-aulas/<materia>', methods=['GET'])
 @token_required
@@ -765,6 +877,27 @@ def deletar_aula(aula_id):
     db['grade_horaria'].delete_one({"_id": ObjectId(aula_id)})
 
     return jsonify({"message": "Aula deletada com sucesso"}), 200
+
+@app.route('/professor/listar-materias', methods=['GET'])
+@token_required
+def listar_materias_professor():
+    token = request.headers['Authorization'].split(" ")[1]
+    data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+    current_user = load_user(data['matricula'])
+    
+    if current_user.tipo != 'professor':
+        return jsonify({"message": "Apenas professores podem deletar aulas"}), 403
+    
+    professor_matricula = current_user.matricula
+
+    db = get_db()
+    professor = db['usuarios'].find_one({"matricula": professor_matricula})
+
+    if not professor:
+        return jsonify({"message": "Professor não encontrado"}), 404
+    
+
+    return jsonify({"materias": professor.get("materias", [])}), 200
 
 
 @app.route('/logout', methods=['POST'])
