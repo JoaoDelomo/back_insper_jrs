@@ -547,8 +547,11 @@ def editar_nota(aluno_matricula, simulado_id):
         return jsonify({"message": "Aluno não encontrado"}), 404
 
     aluno_notas = aluno.get("notas", [])
+    simulado_id = int(simulado_id)
     nova_nota = request.json
+    nova_nota['id'] = simulado_id
     aluno_notas[int(simulado_id)] = nova_nota
+
 
     db['usuarios'].update_one(
         {"matricula": aluno_matricula},
@@ -567,6 +570,7 @@ def deletar_nota(aluno_matricula, simulado_id):
         return jsonify({"message": "Aluno não encontrado"}), 404
 
     # Converter simulado_id para inteiro, caso seja necessário
+    print(simulado_id)
     simulado_id = int(simulado_id)
 
     # Filtrar as notas, removendo a que corresponde ao simulado_id
